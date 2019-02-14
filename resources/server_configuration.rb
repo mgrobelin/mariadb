@@ -19,9 +19,10 @@
 include MariaDBCookbook::Helpers
 
 property :version,                        String,            default: '10.3'
+property :instance,                       String,            default: lazy { default_instance }
 property :cookbook,                       String,            default: 'mariadb'
-property :mycnf_file,                     String,            default: lazy { "#{conf_dir}/my.cnf" }
-property :extra_configuration_directory,  String,            default: lazy { ext_conf_dir }
+property :mycnf_file,                     String,            default: lazy { "#{conf_dir(instance)}/my.cnf" }
+property :extra_configuration_directory,  String,            default: lazy { ext_conf_dir(instance) }
 property :client_port,                    [String, Integer], default: 3306
 property :client_socket,                  String,            default: lazy { default_socket }
 property :client_host,                    [String, nil],     default: nil
@@ -33,7 +34,7 @@ property :mysqld_user,                    String,            default: 'mysql'
 property :mysqld_pid_file,                [String, nil],     default: lazy { default_pid_file }
 property :mysqld_socket,                  String,            default: lazy { default_socket }
 property :mysqld_basedir,                 String,            default: '/usr'
-property :mysqld_datadir,                 String,            default: '/var/lib/mysql'
+property :mysqld_datadir,                 String,            default: lazy { data_dir(instance) }
 property :mysqld_tmpdir,                  String,            default: '/var/tmp'
 property :mysqld_lc_messages_dir,         String,            default: '/usr/share/mysql'
 property :mysqld_lc_messages,             String,            default: 'en_US'
@@ -63,7 +64,7 @@ property :mysqld_query_cache_limit,       String,            default: '128K'
 property :mysqld_query_cache_size,        String,            default: '64M'
 property :mysqld_query_cache_type,        [String, nil],     default: nil
 property :mysqld_default_storage_engine,  String,            default: 'InnoDB'
-property :mysqld_log_directory,           String,            default: '/var/log/mysql'
+property :mysqld_log_directory,           String,            default: lazy { log_dir(instance) }
 property :mysqld_general_log_file,        String,            default: lazy { "#{mysqld_log_directory}/mysql.log" }
 property :mysqld_general_log,             Integer,           default: 0
 property :mysqld_log_warnings,            Integer,           default: 2
@@ -98,6 +99,21 @@ property :replication_max_binlog_size,    String,            default: '100M'
 property :replication_options,            Hash,              default: {}
 
 action :modify do
+
+  # define skeleton service here for create_data_dir below
+  find_resource(:service, platform_service_name(new_resource.instance)) do
+    service_name lazy { platform_service_name(new_resource.instance) }
+    supports restart: true, status: true, reload: true
+    action :nothing
+  end
+
+  directory conf_dir(new_resource.instance) do
+    owner 'root'
+    group 'root'
+    mode '0755'
+    action :create
+  end
+
   template new_resource.mycnf_file do
     source 'my.cnf.erb'
     owner 'root'
@@ -165,7 +181,7 @@ action :modify do
              )
   end
 
-  directory ext_conf_dir do
+  directory ext_conf_dir(new_resource.instance) do
     owner 'root'
     group 'root'
     mode '0755'
@@ -180,6 +196,7 @@ action :modify do
   end
 
   mariadb_configuration '20-innodb' do
+    instance new_resource.instance
     section 'mysqld'
     cookbook new_resource.cookbook
     option build_innodb_options
@@ -187,13 +204,20 @@ action :modify do
   end
 
   mariadb_configuration '30-replication' do
+    instance new_resource.instance
     section 'mysqld'
     cookbook new_resource.cookbook
     option build_replication_options
     action :add
   end
 
-  move_data_dir if new_resource.mysqld_datadir != data_dir
+  # Do not move any data if an instance is given, as it's hard to detect the 'origin' data dir w/o setting an
+  # additional file marker or similar
+  if new_resource.mysqld_datadir != data_dir(new_resource.instance) && new_resource.instance == ''
+    move_data_dir
+  else
+    create_data_dir
+  end
 end
 
 action_class do
@@ -245,6 +269,17 @@ action_class do
     replication_opts
   end
 
+  def create_data_dir
+    directory new_resource.mysqld_datadir do
+      owner 'mysql'
+      group 'mysql'
+      mode '0750'
+      action :create
+      notifies :restart, "service[#{platform_service_name(new_resource.instance)}]", :immediately
+      only_if { !::File.symlink?(data_dir(new_resource.instance)) }
+    end
+  end
+
   def move_data_dir
     bash 'move-datadir' do
       user 'root'
@@ -257,7 +292,7 @@ action_class do
     end
 
     # Using this to generate a service resource to control
-    service platform_service_name do
+    service platform_service_name(new_resource.instance) do
       supports restart: true, status: true, reload: true
       action :nothing
     end
@@ -267,9 +302,9 @@ action_class do
       group 'mysql'
       mode '0750'
       action :create
-      notifies :stop, "service[#{platform_service_name}]", :immediately
+      notifies :stop, "service[#{platform_service_name(new_resource.instance)}]", :immediately
       notifies :run, 'bash[move-datadir]', :immediately
-      notifies :start, "service[#{platform_service_name}]", :immediately
+      notifies :start, "service[#{platform_service_name(new_resource.instance)}]", :immediately
       only_if { !::File.symlink?(data_dir) }
     end
   end

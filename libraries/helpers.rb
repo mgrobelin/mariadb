@@ -92,80 +92,55 @@ module MariaDBCookbook
       return_array
     end
 
-    #    def database_exists?(new_resource)
-    #      sql = %(SELECT datname from pg_database WHERE datname='#{new_resource.database}')
-    #
-    #      exists = %(psql -c "#{sql}")
-    #      exists << " -U #{new_resource.user}" if new_resource.user
-    #      exists << " --host #{new_resource.host}" if new_resource.host
-    #      exists << " --port #{new_resource.port}" if new_resource.port
-    #      exists << " | grep #{new_resource.database}"
-    #
-    #      cmd = shell_out(exists, user: 'mariadb')
-    #      cmd.run_command
-    #      cmd.exitstatus == 0
-    #    end
-    #
-    #    def user_exists?(new_resource)
-    #      exists = %(psql -c "SELECT rolname FROM pg_roles WHERE rolname='#{new_resource.user}'" | grep '#{new_resource.user}')
-    #
-    #      cmd = Mixlib::ShellOut.new(exists, user: 'postgres')
-    #      cmd.run_command
-    #      cmd.exitstatus == 0
-    #    end
-    #
-    #    def role_sql(new_resource)
-    #      sql = %(\\\"#{new_resource.user}\\\" WITH )
-    #
-    #      %w(superuser createdb createrole inherit replication login).each do |perm|
-    #        sql << "#{'NO' unless new_resource.send(perm)}#{perm.upcase} "
-    #      end
-    #
-    #      sql << if new_resource.encrypted_password
-    #               "ENCRYPTED PASSWORD '#{new_resource.encrypted_password}'"
-    #             elsif new_resource.password
-    #               "PASSWORD '#{new_resource.password}'"
-    #             else
-    #               ''
-    #             end
-    #
-    #      sql << if new_resource.valid_until
-    #               " VALID UNTIL '#{new_resource.valid_until}'"
-    #             else
-    #               ''
-    #             end
-    #    end
-    #
-    #    def extension_installed?
-    #      query = "SELECT 'installed' FROM pg_extension WHERE extname = '#{new_resource.extension}';"
-    #      !(execute_sql(query, new_resource.database) =~ /^installed$/).nil?
-    #    end
-
-    def data_dir(_version = node.run_state['mariadb']['version'])
-      '/var/lib/mysql'
+    def default_instance
+      ''
     end
 
-    def conf_dir(_version = node.run_state['mariadb']['version'])
+    def data_dir(instance)
+      if instance && instance != ''
+        "/var/lib/mysql-#{instance}"
+      else
+        '/var/lib/mysql'
+      end
+    end
+
+    def conf_dir(instance)
       case node['platform_family']
       when 'rhel', 'fedora', 'amazon'
         '/etc'
       when 'debian'
-        '/etc/mysql'
+        if instance && instance != ''
+          "/etc/mysql-#{instance}"
+        else
+          '/etc/mysql'
+        end
       end
     end
 
-    def ext_conf_dir(_version = node.run_state['mariadb']['version'])
+    def ext_conf_dir(instance)
       case node['platform_family']
       when 'rhel', 'fedora', 'amazon'
-        "#{conf_dir}/my.cnf.d"
+        "#{conf_dir(instance)}/my.cnf.d"
       when 'debian'
-        "#{conf_dir}/conf.d"
+        "#{conf_dir(instance)}/conf.d"
+      end
+    end
+
+    def log_dir(instance)
+      if instance && instance != ''
+        "/var/log/mysql-#{instance}"
+      else
+        '/var/log/mysql'
       end
     end
 
     # determine the platform specific service name
-    def platform_service_name(_version = node.run_state['mariadb']['version'])
-      'mysql'
+    def platform_service_name(instance)
+      if instance && instance != ''
+        "mariadb@#{instance}"
+      else
+        'mariadb'
+      end
     end
 
     def mysql_command_string(database, query)

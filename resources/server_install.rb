@@ -19,9 +19,10 @@
 include MariaDBCookbook::Helpers
 
 property :version,           String,        default: '10.3'
+property :instance,          String,        default: lazy { default_instance }
 property :setup_repo,        [true, false], default: true
-property :mycnf_file,        String,        default: lazy { "#{conf_dir}/my.cnf" }
-property :extconf_directory, String,        default: lazy { ext_conf_dir }
+property :mycnf_file,        String,        default: lazy { "#{conf_dir(instance)}/my.cnf" }
+property :extconf_directory, String,        default: lazy { ext_conf_dir(instance) }
 property :data_directory,    String,        default: lazy { data_dir }
 property :external_pid_file, String,        default: lazy { "/var/run/mysql/#{version}-main.pid" }
 property :password,          [String, nil], default: 'generate'
@@ -41,15 +42,15 @@ action :install do
 end
 
 action :create do
-  find_resource(:service, 'mysql') do
-    service_name lazy { platform_service_name }
+  find_resource(:service, platform_service_name(instance)) do
+    service_name lazy { platform_service_name(instance) }
     supports restart: true, status: true, reload: true
     action :nothing
   end
 
-  log 'Enable and start MariaDB service' do
-    notifies :enable, "service[#{platform_service_name}]", :immediately
-    notifies :stop, "service[#{platform_service_name}]", :immediately
+  log "Enable and start MariaDB service #{platform_service_name(instance)}" do
+    notifies :enable, "service[#{platform_service_name(instance)}]", :immediately
+    notifies :stop, "service[#{platform_service_name(instance)}]", :immediately
     notifies :run, 'execute[apply-mariadb-root-password]', :immediately
   end
 
@@ -92,7 +93,7 @@ flush privileges;"
     command "(test -f #{pid_file} && kill `cat #{pid_file}` && sleep 3); /usr/sbin/mysqld -u root --pid-file=#{pid_file} --init-file=#{data_dir}/recovery.conf&>/dev/null& sleep 2 && (test -f #{pid_file} && kill `cat #{pid_file}`)"
     notifies :create, 'file[generate-mariadb-root-password]', :before
     notifies :create, "directory[#{pid_dir}]", :before
-    notifies :start, "service[#{platform_service_name}]", :immediately
+    notifies :start, "service[#{platform_service_name(new_resource)}]", :immediately
     notifies :run, 'execute[verify-root-password-okay]', :delayed
     action :nothing
   end

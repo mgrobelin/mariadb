@@ -17,11 +17,12 @@
 #
 
 # name of the extra conf file, used for .cnf filename
+property :instance,           String,                 default: lazy { default_instance }
 property :configuration_name, String, name_property: true
 property :section,            String, required: true
 property :option,             Hash,   required: true, default: {}
 property :cookbook,           String,                 default: 'mariadb'
-property :extconf_directory,  String,                 default: lazy { ext_conf_dir }
+property :extconf_directory,  String,                 default: lazy { ext_conf_dir(instance) }
 
 action :add do
   variables_hash = {
