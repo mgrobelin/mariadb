@@ -217,6 +217,7 @@ action :modify do
     move_data_dir
   else
     create_data_dir
+    db_init(new_resource.instance)
   end
 end
 
@@ -275,7 +276,8 @@ action_class do
       group 'mysql'
       mode '0750'
       action :create
-      notifies :restart, "service[#{platform_service_name(new_resource.instance)}]", :immediately
+      # FIXME if we restart here, we don't have the mysql/ meta dir yet within data_dir, which is created by mysql_install_db
+      #notifies :restart, "service[#{platform_service_name(new_resource.instance)}]", :immediately
       only_if { !::File.symlink?(data_dir(new_resource.instance)) }
     end
   end

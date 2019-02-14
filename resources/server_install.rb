@@ -20,10 +20,12 @@ include MariaDBCookbook::Helpers
 
 property :version,           String,        default: '10.3'
 property :instance,          String,        default: lazy { default_instance }
+# for systemd mariadb@.service unit template
+property :cookbook,          String,        default: 'mariadb'
 property :setup_repo,        [true, false], default: true
 property :mycnf_file,        String,        default: lazy { "#{conf_dir(instance)}/my.cnf" }
 property :extconf_directory, String,        default: lazy { ext_conf_dir(instance) }
-property :data_directory,    String,        default: lazy { data_dir }
+property :data_directory,    String,        default: lazy { data_dir(instance) }
 property :external_pid_file, String,        default: lazy { "/var/run/mysql/#{version}-main.pid" }
 property :password,          [String, nil], default: 'generate'
 property :port,              Integer,       default: 3306
@@ -39,6 +41,20 @@ action :install do
   end
 
   package server_pkg_name
+
+  # The default systemd unit expects configuration within /etc/mysql/conf.d/my%I.cnf (where %I is the instance name),
+  # but we favor /etc/mysql-%I/my.cnf instead
+  template '/etc/systemd/system/mariadb@.service' do
+    source 'systemd/mariadb@.service.erb'
+    owner 'root'
+    group 'root'
+    mode '0644'
+    cookbook new_resource.cookbook
+    variables(
+      instance: new_resource.instance,
+      cnf_file: new_resource.mycnf_file
+    )
+  end
 end
 
 action :create do
@@ -52,6 +68,8 @@ action :create do
     notifies :enable, "service[#{platform_service_name(instance)}]", :immediately
     notifies :stop, "service[#{platform_service_name(instance)}]", :immediately
     notifies :run, 'execute[apply-mariadb-root-password]', :immediately
+    # TODO we only restart dists default mysql if an instance is given
+    only_if { instance && instance != '' }
   end
 
   # here we want to generate a new password if: 1- the user passed 'generate' to the password argument

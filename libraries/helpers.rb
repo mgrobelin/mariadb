@@ -200,5 +200,23 @@ module MariaDBCookbook
         '/var/run/mysqld/mysqld.pid'
       end
     end
+
+    def db_init(instance)
+      mysql_install_db_cmd(instance)
+    end
+
+    def mysql_install_db_bin
+      'mysql_install_db'
+    end
+
+    # init database files within data_dir (only if it's empty)
+    def mysql_install_db_cmd(instance)
+      cmd = mysql_install_db_bin
+      cmd << " --defaults-file=#{conf_dir(instance)}/my.cnf"
+      cmd << " --datadir=#{data_dir(instance)}"
+      cmd << " --user=mysql"
+      shell_out!(cmd) if shell_out!("find #{data_dir(instance)} -type f | grep -q '.'")
+    end
+
   end
 end
