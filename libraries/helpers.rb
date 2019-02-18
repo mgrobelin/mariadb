@@ -183,6 +183,7 @@ module MariaDBCookbook
       platform?('amazon') ? '6' : '$releasever'
     end
 
+    # FIXME multi-instance
     def default_socket
       case node['platform_family']
       when 'rhel', 'fedora', 'amazon'
@@ -192,6 +193,7 @@ module MariaDBCookbook
       end
     end
 
+    # FIXME multi-instance
     def default_pid_file
       case node['platform_family']
       when 'rhel', 'fedora', 'amazon'
@@ -210,12 +212,15 @@ module MariaDBCookbook
     end
 
     # init database files within data_dir (only if it's empty)
+    # see https://mariadb.com/kb/en/library/mysql_install_db/
     def mysql_install_db_cmd(instance)
       cmd = mysql_install_db_bin
-      cmd << " --defaults-file=#{conf_dir(instance)}/my.cnf"
+      #cmd << " --defaults-file=#{conf_dir(instance)}/my.cnf"
+      cmd << " --defaults-file=/etc/mysql/debian.cnf"
       cmd << " --datadir=#{data_dir(instance)}"
+      cmd << ' --basedir=/usr'
       cmd << " --user=mysql"
-      shell_out!(cmd) if shell_out!("find #{data_dir(instance)} -type f | grep -q '.'")
+      shell_out!(cmd) if shell_out("test -d #{data_dir(instance)} && find #{data_dir(instance)} -type f | grep -q '.'")
     end
 
   end

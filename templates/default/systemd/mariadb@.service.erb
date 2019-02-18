@@ -30,8 +30,11 @@ ConditionPathExists=/etc/mysql-%I/my.cnf
 
 [Install]
 WantedBy=multi-user.target
-Alias=mysql.service
-Alias=mysqld.service
+# mgrobelin: We don't want to use these generic aliases with multi-instances
+#
+# Failed to enable unit: File /etc/systemd/system/mysql.service already exists and is a symlink to /lib/systemd/system/mariadb.service.
+#Alias=mysql.service
+#Alias=mysqld.service
 
 
 [Service]

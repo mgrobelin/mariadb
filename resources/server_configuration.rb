@@ -42,6 +42,7 @@ property :mysqld_skip_external_locking,   [true, false],     default: true
 property :mysqld_skip_log_bin,            [true, false],     default: false
 property :mysqld_skip_name_resolve,       [true, false],     default: false
 property :mysqld_bind_address,            String,            default: '127.0.0.1'
+property :mysqld_port,                    [String,Integer],  default: 3306
 property :mysqld_max_connections,         Integer,           default: 100
 property :mysqld_max_statement_time,      [Integer, nil],    default: nil
 property :mysqld_connect_timeout,         Integer,           default: 5
@@ -139,6 +140,7 @@ action :modify do
               mysqld_skip_log_bin: new_resource.mysqld_skip_log_bin,
               mysqld_skip_name_resolve: new_resource.mysqld_skip_name_resolve,
               mysqld_bind_address: new_resource.mysqld_bind_address,
+              mysqld_port: new_resource.mysqld_port,
               mysqld_max_connections: new_resource.mysqld_max_connections,
               mysqld_max_statement_time: new_resource.mysqld_max_statement_time,
               mysqld_connect_timeout: new_resource.mysqld_connect_timeout,

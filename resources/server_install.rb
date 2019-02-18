@@ -55,6 +55,15 @@ action :install do
       cnf_file: new_resource.mycnf_file
     )
   end
+
+  # Link resolveip as MariaDB mysql_install_db otherwise complains https://jira.mariadb.org/browse/MDEV-18563
+  if node['platform'] == 'ubuntu'
+    link '/usr/sbin/resolveip' do
+      to '/usr/bin/resolveip'
+      only_if 'test -f /usr/bin/resolveip'
+      not_if 'test -L /usr/sbin/resolveip || test -f /usr/sbin/resolveip'
+    end
+  end
 end
 
 action :create do
