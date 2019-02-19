@@ -24,15 +24,15 @@ property :cookbook,                       String,            default: 'mariadb'
 property :mycnf_file,                     String,            default: lazy { "#{conf_dir(instance)}/my.cnf" }
 property :extra_configuration_directory,  String,            default: lazy { ext_conf_dir(instance) }
 property :client_port,                    [String, Integer], default: 3306
-property :client_socket,                  String,            default: lazy { default_socket }
+property :client_socket,                  String,            default: lazy { default_socket(instance) }
 property :client_host,                    [String, nil],     default: nil
 property :client_options,                 Hash,              default: {}
-property :mysqld_safe_socket,             String,            default: lazy { default_socket }
+property :mysqld_safe_socket,             String,            default: lazy { default_socket(instance) }
 property :mysqld_safe_nice,               [String, Integer], default: 0
 property :mysqld_safe_options,            Hash,              default: {}
 property :mysqld_user,                    String,            default: 'mysql'
-property :mysqld_pid_file,                [String, nil],     default: lazy { default_pid_file }
-property :mysqld_socket,                  String,            default: lazy { default_socket }
+property :mysqld_pid_file,                [String, nil],     default: lazy { default_pid_file(instance) }
+property :mysqld_socket,                  String,            default: lazy { default_socket(instance) }
 property :mysqld_basedir,                 String,            default: '/usr'
 property :mysqld_datadir,                 String,            default: lazy { data_dir(instance) }
 property :mysqld_tmpdir,                  String,            default: '/var/tmp'
@@ -98,6 +98,12 @@ property :replication_sync_binlog,        [String, Integer], default: 0
 property :replication_expire_logs_days,   Integer,           default: 10
 property :replication_max_binlog_size,    String,            default: '100M'
 property :replication_options,            Hash,              default: {}
+
+# moved from server_install.rb, used by mysql_install_db
+property :password,          [String, nil], default: 'generate'
+# use mysqld_port instead
+#property :port,              Integer,       default: 3306
+property :initdb_locale,     String,        default: 'UTF-8'
 
 action :modify do
 
@@ -219,7 +225,79 @@ action :modify do
     move_data_dir
   else
     create_data_dir
-    db_init(new_resource.instance)
+  end
+end
+
+action :create do
+  find_resource(:service, platform_service_name(new_resource.instance)) do
+    service_name lazy { platform_service_name(new_resource.instance) }
+    supports restart: true, status: true, reload: true
+    action :nothing
+  end
+
+  log "Enable and start MariaDB service #{platform_service_name(new_resource.instance)}" do
+    notifies :enable, "service[#{platform_service_name(new_resource.instance)}]", :immediately
+    notifies :stop, "service[#{platform_service_name(new_resource.instance)}]", :immediately
+    notifies :run, 'execute[apply-mariadb-root-password]', :immediately
+    only_if { new_resource.instance && new_resource.instance != '' }
+  end
+
+  # here we want to generate a new password if: 1- the user passed 'generate' to the password argument
+  #                                             2- the user did not pass anything to the password argument OR
+  #                                                the user did not define node['mariadb']['server_root_password'] attribute
+  mariadb_root_password = (new_resource.password == 'generate' || new_resource.password.nil?) ? secure_random : new_resource.password
+
+  # Generate a random password or set a password defined with node['mariadb']['server_root_password'].
+  # The password is set or change at each run. It is good for security if you choose to set a random password and
+  # allow you to change the root password if needed.
+  file 'generate-mariadb-root-password' do
+    path "#{data_dir(new_resource.instance)}/recovery.conf"
+    owner 'mysql'
+    group 'root'
+    mode '640'
+    sensitive true
+    content <<~EOF
+      use mysql;
+      update user set password=PASSWORD('#{mariadb_root_password}') where User='root';
+      flush privileges;
+      shutdown;
+    EOF
+    action :nothing
+  end
+
+  pid_file = default_pid_file(new_resource.instance)
+  pid_dir = ::File.dirname(pid_file).to_s
+
+  # because some distros may not take care of the pid file location directory, we manage it ourselves
+  directory pid_dir.to_s do
+    owner 'mysql'
+    group 'mysql'
+    mode '755'
+    recursive true
+    action :nothing
+  end
+
+  # stop mariadb service, start mysqld to change root password and immediately shutdown by SQL commands
+  # afterwards start mariadb service and verify root password change
+  execute 'apply-mariadb-root-password' do
+    user 'mysql'
+    command <<~EOF
+      /usr/sbin/mysqld --defaults-file=#{new_resource.mycnf_file} --datadir=#{data_dir(new_resource.instance)} --pid-file=#{pid_file} --init-file=#{data_dir(new_resource.instance)}/recovery.conf
+    EOF
+    notifies :create, 'file[generate-mariadb-root-password]', :before
+    notifies :create, "directory[#{pid_dir}]", :before
+    notifies :stop, "service[#{platform_service_name(new_resource.instance)}]", :before
+    notifies :start, "service[#{platform_service_name(new_resource.instance)}]", :immediately
+    notifies :run, 'execute[verify-root-password-okay]', :delayed
+    action :nothing
+  end
+
+  # make sure the password was properly set
+  # TODO why is the passwort verified at all? is there a generic strategy / what shall happen on fail?
+  execute 'verify-root-password-okay' do
+    user 'root'
+    command "mysql -u root -p#{mariadb_root_password} -S #{default_socket(new_resource.instance)} -e '\\s'&>/dev/null"
+    action :nothing
   end
 end
 
@@ -276,11 +354,22 @@ action_class do
     directory new_resource.mysqld_datadir do
       owner 'mysql'
       group 'mysql'
-      mode '0750'
+      mode '0755'
       action :create
-      # FIXME if we restart here, we don't have the mysql/ meta dir yet within data_dir, which is created by mysql_install_db
-      #notifies :restart, "service[#{platform_service_name(new_resource.instance)}]", :immediately
       only_if { !::File.symlink?(data_dir(new_resource.instance)) }
+    end
+
+    # init database files within data_dir (only if it doesn't contain a performance_schema/ subdirectory)
+    # see https://mariadb.com/kb/en/library/mysql_install_db/
+    execute "init-db-#{new_resource.instance}" do
+      user 'mysql'
+      command <<~EOF
+        #{mysql_install_db_bin} --defaults-file=#{conf_dir(new_resource.instance)}/my.cnf \
+        --datadir=#{data_dir(new_resource.instance)} --basedir=/usr \
+        --user=mysql
+      EOF
+      only_if "test -d #{data_dir(new_resource.instance)}"
+      not_if "find #{data_dir(new_resource.instance)} -type d -name 'performance_schema' | grep -q '.'"
     end
   end
 
@@ -288,9 +377,9 @@ action_class do
     bash 'move-datadir' do
       user 'root'
       code <<-EOH
-      /bin/cp -a #{data_dir}/* #{new_resource.mysqld_datadir} &&
-      /bin/rm -rf #{data_dir} &&
-      /bin/ln -s #{new_resource.mysqld_datadir} #{data_dir}
+      /bin/cp -a #{data_dir(new_resource.instance)}/* #{new_resource.mysqld_datadir} &&
+      /bin/rm -rf #{data_dir(new_resource.instance)} &&
+      /bin/ln -s #{new_resource.mysqld_datadir} #{data_dir(new_resource.instance)}
       EOH
       action :nothing
     end
@@ -309,7 +398,12 @@ action_class do
       notifies :stop, "service[#{platform_service_name(new_resource.instance)}]", :immediately
       notifies :run, 'bash[move-datadir]', :immediately
       notifies :start, "service[#{platform_service_name(new_resource.instance)}]", :immediately
-      only_if { !::File.symlink?(data_dir) }
+      only_if { !::File.symlink?(data_dir(new_resource.instance)) }
     end
   end
+
+  def mysql_install_db_bin
+    'mysql_install_db'
+  end
+
 end

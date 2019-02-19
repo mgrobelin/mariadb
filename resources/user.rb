@@ -18,6 +18,7 @@
 include MariaDBCookbook::Helpers
 
 property :username,      String,                             name_property: true
+property :instance,      String,                             default: lazy { default_instance }
 property :password,      [String, HashedPassword, NilClass], default: nil,  sensitive: true
 property :host,          String,                             default: 'localhost', desired_state: false
 property :database_name, String
@@ -31,6 +32,7 @@ property :ctrl_user,     [String, NilClass],                 default: 'root', de
 property :ctrl_password, [String, NilClass],                 default: nil, sensitive: true, desired_state: false
 property :ctrl_host,     [String, NilClass],                 default: 'localhost', desired_state: false
 property :ctrl_port,     [Integer, NilClass],                default: 3306, desired_state: false
+property :ctrl_socket,   [String, NilClass],                 default: lazy { default_socket(instance)}, desired_state: false
 
 action :create do
   if current_resource.nil?
@@ -52,7 +54,7 @@ action :create do
 end
 
 load_current_value do
-  socket = ctrl_host == 'localhost' ? default_socket : nil
+  socket = ctrl_host == 'localhost' ? ctrl_socket : nil
   ctrl = { user: ctrl_user, password: ctrl_password
          }.merge!(socket.nil? ? { host: ctrl_host, port: ctrl_port.to_s } : { socket: socket })
   query = "SELECT User,Host FROM mysql.user WHERE User='#{username}' AND Host='#{host}';"
@@ -64,7 +66,7 @@ action_class do
   include MariaDBCookbook::Helpers
 
   def run_query(query)
-    socket = new_resource.ctrl_host == 'localhost' ? default_socket : nil
+    socket = new_resource.ctrl_host == 'localhost' ? default_socket(new_resource.instance) : nil
     ctrl_hash = { host: new_resource.ctrl_host, port: new_resource.ctrl_port, username: new_resource.ctrl_user, password: new_resource.ctrl_password, socket: socket }
     Chef::Log.debug("#{@new_resource}: Performing query [#{query}]")
     execute_sql(query, nil, ctrl_hash)

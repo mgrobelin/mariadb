@@ -42,7 +42,7 @@ module MariaDBCookbook
       cmd << " -p#{ctrl[:password]}"  if ctrl && ctrl.key?(:password) && !ctrl[:password].nil?
       cmd << " -h #{ctrl[:host]}"     if ctrl && ctrl.key?(:host) && !ctrl[:host].nil? && ctrl[:host] != 'localhost'
       cmd << " -P #{ctrl[:port]}"     if ctrl && ctrl.key?(:port) && !ctrl[:port].nil? && ctrl[:host] != 'localhost'
-      cmd << " -S #{default_socket}"   if ctrl && ctrl.key?(:host) && !ctrl[:host].nil? && ctrl[:host] == 'localhost'
+      cmd << " -S #{ctrl[:socket]}"   if ctrl && ctrl.key?(:socket) && !ctrl[:socket].nil?
       cmd << " #{database}"            unless database.nil?
       cmd << " | grep #{grep_for}"     if grep_for
       Chef::Log.debug("Executing this command: [#{cmd}]\n")
@@ -183,44 +183,30 @@ module MariaDBCookbook
       platform?('amazon') ? '6' : '$releasever'
     end
 
-    # FIXME multi-instance
-    def default_socket
+    def default_socket(instance)
       case node['platform_family']
       when 'rhel', 'fedora', 'amazon'
         '/var/lib/mysql/mysql.sock'
       when 'debian'
-        '/var/run/mysqld/mysqld.sock'
+        if instance && instance != ''
+          "/var/run/mysqld/mysqld-#{instance}.sock"
+        else
+          '/var/run/mysqld/mysqld.sock'
+        end
       end
     end
 
-    # FIXME multi-instance
-    def default_pid_file
+    def default_pid_file(instance)
       case node['platform_family']
       when 'rhel', 'fedora', 'amazon'
         nil
       when 'debian'
-        '/var/run/mysqld/mysqld.pid'
+        if instance && instance != ''
+          "/var/run/mysqld/mysqld-#{instance}.pid"
+        else
+          '/var/run/mysqld/mysqld.pid'
+        end
       end
-    end
-
-    def db_init(instance)
-      mysql_install_db_cmd(instance)
-    end
-
-    def mysql_install_db_bin
-      'mysql_install_db'
-    end
-
-    # init database files within data_dir (only if it's empty)
-    # see https://mariadb.com/kb/en/library/mysql_install_db/
-    def mysql_install_db_cmd(instance)
-      cmd = mysql_install_db_bin
-      #cmd << " --defaults-file=#{conf_dir(instance)}/my.cnf"
-      cmd << " --defaults-file=/etc/mysql/debian.cnf"
-      cmd << " --datadir=#{data_dir(instance)}"
-      cmd << ' --basedir=/usr'
-      cmd << " --user=mysql"
-      shell_out!(cmd) if shell_out("test -d #{data_dir(instance)} && find #{data_dir(instance)} -type f | grep -q '.'")
     end
 
   end

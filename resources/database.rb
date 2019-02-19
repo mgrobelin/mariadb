@@ -18,6 +18,7 @@
 include MariaDBCookbook::Helpers
 
 property :database_name, String,         name_property: true
+property :instance,      String,         default: lazy { default_instance }
 property :host,          [String, nil],  default: 'localhost', desired_state: false
 property :port,          [Integer, nil], default: 3306, desired_state: false
 property :user,          [String, nil],  default: 'root', desired_state: false
@@ -79,6 +80,7 @@ action_class do
 
   def run_query(query, database)
     socket = (new_resource.socket && new_resource.host == 'localhost') ? new_resource.socket : nil
+    socket = default_socket(new_resource.instance) if new_resource.instance && new_resource.instance != '' && socket.nil?
     ctrl_hash = { host: new_resource.host, port: new_resource.port, user: new_resource.user, password: new_resource.password, socket: socket }
     Chef::Log.debug("#{@new_resource}: Performing query [#{query}]")
     execute_sql(query, database, ctrl_hash)

@@ -27,9 +27,6 @@ property :mycnf_file,        String,        default: lazy { "#{conf_dir(instance
 property :extconf_directory, String,        default: lazy { ext_conf_dir(instance) }
 property :data_directory,    String,        default: lazy { data_dir(instance) }
 property :external_pid_file, String,        default: lazy { "/var/run/mysql/#{version}-main.pid" }
-property :password,          [String, nil], default: 'generate'
-property :port,              Integer,       default: 3306
-property :initdb_locale,     String,        default: 'UTF-8'
 
 action :install do
   node.run_state['mariadb'] ||= {}
@@ -60,76 +57,9 @@ action :install do
   if node['platform'] == 'ubuntu'
     link '/usr/sbin/resolveip' do
       to '/usr/bin/resolveip'
-      only_if 'test -f /usr/bin/resolveip'
-      not_if 'test -L /usr/sbin/resolveip || test -f /usr/sbin/resolveip'
+      #only_if 'test -f /usr/bin/resolveip'
+      #not_if 'test -L /usr/sbin/resolveip || test -f /usr/sbin/resolveip'
     end
-  end
-end
-
-action :create do
-  find_resource(:service, platform_service_name(instance)) do
-    service_name lazy { platform_service_name(instance) }
-    supports restart: true, status: true, reload: true
-    action :nothing
-  end
-
-  log "Enable and start MariaDB service #{platform_service_name(instance)}" do
-    notifies :enable, "service[#{platform_service_name(instance)}]", :immediately
-    notifies :stop, "service[#{platform_service_name(instance)}]", :immediately
-    notifies :run, 'execute[apply-mariadb-root-password]', :immediately
-    # TODO we only restart dists default mysql if an instance is given
-    only_if { instance && instance != '' }
-  end
-
-  # here we want to generate a new password if: 1- the user passed 'generate' to the password argument
-  #                                             2- the user did not pass anything to the password argument OR
-  #                                                the user did not define node['mariadb']['server_root_password'] attribute
-  mariadb_root_password = (new_resource.password == 'generate' || new_resource.password.nil?) ? secure_random : new_resource.password
-
-  # Generate a random password or set a password defined with node['mariadb']['server_root_password'].
-  # The password is set or change at each run. It is good for security if you choose to set a random password and
-  # allow you to change the root password if needed.
-  file 'generate-mariadb-root-password' do
-    path "#{data_dir}/recovery.conf"
-    owner 'mysql'
-    group 'root'
-    mode '640'
-    sensitive true
-    content "use mysql;
-update user set password=PASSWORD('#{mariadb_root_password}') where User='root';
-flush privileges;"
-    action :nothing
-  end
-
-  pid_file = default_pid_file.nil? ? '/var/run/mysqld/mysqld.pid' : default_pid_file
-  pid_dir = ::File.dirname(pid_file).to_s
-
-  # because some distros may not take care of the pid file location directory, we manage it ourselves
-  directory pid_dir.to_s do
-    owner 'mysql'
-    group 'mysql'
-    mode '755'
-    recursive true
-    action :nothing
-  end
-
-  # make sure that mysqld is not running, and then set the root password and make sure the mysqld process is killed after setting the password
-  execute 'apply-mariadb-root-password' do
-    user 'mysql'
-    # TODO, I really dislike the sleeps here, should come up with a better way to do this
-    command "(test -f #{pid_file} && kill `cat #{pid_file}` && sleep 3); /usr/sbin/mysqld -u root --pid-file=#{pid_file} --init-file=#{data_dir}/recovery.conf&>/dev/null& sleep 2 && (test -f #{pid_file} && kill `cat #{pid_file}`)"
-    notifies :create, 'file[generate-mariadb-root-password]', :before
-    notifies :create, "directory[#{pid_dir}]", :before
-    notifies :start, "service[#{platform_service_name(new_resource)}]", :immediately
-    notifies :run, 'execute[verify-root-password-okay]', :delayed
-    action :nothing
-  end
-
-  # make sure the password was properly set
-  execute 'verify-root-password-okay' do
-    user 'root'
-    command "mysql -u root -p#{mariadb_root_password} -e '\\s'&>/dev/null"
-    action :nothing
   end
 end
 
