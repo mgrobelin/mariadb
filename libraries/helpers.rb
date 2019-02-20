@@ -42,7 +42,7 @@ module MariaDBCookbook
       cmd << " -p#{ctrl[:password]}"  if ctrl && ctrl.key?(:password) && !ctrl[:password].nil?
       cmd << " -h #{ctrl[:host]}"     if ctrl && ctrl.key?(:host) && !ctrl[:host].nil? && ctrl[:host] != 'localhost'
       cmd << " -P #{ctrl[:port]}"     if ctrl && ctrl.key?(:port) && !ctrl[:port].nil? && ctrl[:host] != 'localhost'
-      cmd << " -S #{ctrl[:socket]}"   if ctrl && ctrl.key?(:socket) && !ctrl[:socket].nil?
+      cmd << " -S #{ctrl[:socket]}"   if ctrl && ctrl.key?(:socket) && !ctrl[:socket].nil? && ctrl[:host] != 'localhost'
       cmd << " #{database}"            unless database.nil?
       cmd << " | grep #{grep_for}"     if grep_for
       Chef::Log.debug("Executing this command: [#{cmd}]\n")
