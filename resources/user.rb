@@ -248,7 +248,8 @@ action :grant do
   # Repair
   if incorrect_privs
     converge_by "Granting privs for '#{new_resource.username}'@'#{new_resource.host}'" do
-      repair_sql = "GRANT #{new_resource.privileges.join(',').gsub('create_tmp_table', 'create temporary tables')}"
+      # TODO some other priv shortcuts don't match to their sql pendant, e.g. repl_client -> replication client see https://mariadb.com/kb/en/library/grant/
+      repair_sql = "GRANT #{new_resource.privileges.join(',').gsub('repl_slave', 'replication slave').gsub('create_tmp_table', 'create temporary tables')}"
       repair_sql << " ON #{db_name}.#{tbl_name}"
       repair_sql << " TO '#{new_resource.username}'@'#{new_resource.host}' IDENTIFIED BY"
       repair_sql << if new_resource.password.is_a?(HashedPassword)

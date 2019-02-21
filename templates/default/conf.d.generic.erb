@@ -1,5 +1,6 @@
 # DEPLOYED BY CHEF
 [<%= @section -%>]
+<% if @options.is_a?(Hash) %>
 <% @options.each do | option_name, option_value |-%>
  <% if option_value.to_s == 'true' -%>
 <%= option_name %>
@@ -17,3 +18,9 @@
   <% end -%>
  <% end -%>
 <% end -%>
+<% else %>
+<%# flat array of strings %>
+<% @options.each do | option |-%>
+<%= option %>
+<% end %>
+<% end %>

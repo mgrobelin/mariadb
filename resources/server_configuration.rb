@@ -91,13 +91,16 @@ property :innodb_open_files,              Integer,           default: 400
 property :innodb_io_capacity,             Integer,           default: 400
 property :innodb_flush_method,            String,            default: 'O_DIRECT'
 property :innodb_options,                 Hash,              default: {}
-property :replication_server_id,          [String, nil],     default: nil
+property :replication_server_id,          [Integer, nil],    default: nil
 property :replication_log_bin,            String,            default: lazy { "#{mysqld_log_directory}/mariadb-bin" }
 property :replication_log_bin_index,      String,            default: lazy { "#{mysqld_log_directory}/mariadb-bin.index" }
 property :replication_sync_binlog,        [String, Integer], default: 0
 property :replication_expire_logs_days,   Integer,           default: 10
 property :replication_max_binlog_size,    String,            default: '100M'
-property :replication_options,            Hash,              default: {}
+property :replication_relay_log,          String,            default: lazy { "#{mysqld_log_directory}/mariadb-relay-bin" }
+property :replication_relay_log_index,    String,            default: lazy { "#{mysqld_log_directory}/mariadb-relay-bin.index" }
+property :replication_relay_log_info,     String,            default: lazy { "#{mysqld_log_directory}/relay-log.info" }
+property :replication_options,            Array,             default: []
 
 # moved from server_install.rb, used by mysql_install_db
 property :password,          [String, nil], default: 'generate'
@@ -187,6 +190,7 @@ action :modify do
               isamchk_options: new_resource.isamchk_options,
               extra_configuration_directory: new_resource.extra_configuration_directory
              )
+    notifies :restart, "service[#{platform_service_name(new_resource.instance)}]"
   end
 
   directory ext_conf_dir(new_resource.instance) do
@@ -209,6 +213,7 @@ action :modify do
     cookbook new_resource.cookbook
     option build_innodb_options
     action :add
+    notifies :restart, "service[#{platform_service_name(new_resource.instance)}]"
   end
 
   mariadb_configuration '30-replication' do
@@ -217,6 +222,7 @@ action :modify do
     cookbook new_resource.cookbook
     option build_replication_options
     action :add
+    notifies :restart, "service[#{platform_service_name(new_resource.instance)}]"
   end
 
   # Do not move any data if an instance is given, as it's hard to detect the 'origin' data dir w/o setting an
@@ -237,9 +243,9 @@ action :create do
 
   log "Enable and start MariaDB service #{platform_service_name(new_resource.instance)}" do
     notifies :enable, "service[#{platform_service_name(new_resource.instance)}]", :immediately
-    notifies :stop, "service[#{platform_service_name(new_resource.instance)}]", :immediately
-    notifies :run, 'execute[apply-mariadb-root-password]', :immediately
-    only_if { new_resource.instance && new_resource.instance != '' }
+    notifies :start, "service[#{platform_service_name(new_resource.instance)}]", :immediately
+    #notifies :run, 'execute[apply-mariadb-root-password]', :immediately
+    #only_if { new_resource.instance && new_resource.instance != '' }
   end
 
   # here we want to generate a new password if: 1- the user passed 'generate' to the password argument
@@ -250,55 +256,66 @@ action :create do
   # Generate a random password or set a password defined with node['mariadb']['server_root_password'].
   # The password is set or change at each run. It is good for security if you choose to set a random password and
   # allow you to change the root password if needed.
-  file 'generate-mariadb-root-password' do
+  #
+  bash 'set-mariadb-root-password' do
+    user 'root'
+    code <<~EOH
+      mysqladmin --defaults-file=#{new_resource.mycnf_file} password #{mariadb_root_password}
+    EOH
+    not_if { ::File.exist? "#{data_dir(new_resource.instance)}/recovery.conf" }
+    only_if { new_resource.password }
+    notifies :create, "file[backup-mariadb-root-password]", :immediately
+    action :nothing
+  end
+
+  file 'backup-mariadb-root-password' do
     path "#{data_dir(new_resource.instance)}/recovery.conf"
     owner 'mysql'
     group 'root'
     mode '640'
     sensitive true
     content <<~EOF
-      use mysql;
-      update user set password=PASSWORD('#{mariadb_root_password}') where User='root';
-      flush privileges;
-      shutdown;
+      -- use mysql;
+      -- update user set password=PASSWORD('#{mariadb_root_password}') where User='root';
+      -- flush privileges;
     EOF
     action :nothing
   end
 
-  pid_file = default_pid_file(new_resource.instance)
-  pid_dir = ::File.dirname(pid_file).to_s
+  #pid_file = default_pid_file(new_resource.instance)
+  #pid_dir = ::File.dirname(pid_file).to_s
 
   # because some distros may not take care of the pid file location directory, we manage it ourselves
-  directory pid_dir.to_s do
-    owner 'mysql'
-    group 'mysql'
-    mode '755'
-    recursive true
-    action :nothing
-  end
+  #directory pid_dir.to_s do
+  #  owner 'mysql'
+  #  group 'mysql'
+  #  mode '755'
+  # recursive true
+  #  action :nothing
+  #end
 
   # stop mariadb service, start mysqld to change root password and immediately shutdown by SQL commands
   # afterwards start mariadb service and verify root password change
-  execute 'apply-mariadb-root-password' do
-    user 'mysql'
-    command <<~EOF
-      /usr/sbin/mysqld --defaults-file=#{new_resource.mycnf_file} --datadir=#{data_dir(new_resource.instance)} --pid-file=#{pid_file} --init-file=#{data_dir(new_resource.instance)}/recovery.conf
-    EOF
-    notifies :create, 'file[generate-mariadb-root-password]', :before
-    notifies :create, "directory[#{pid_dir}]", :before
-    notifies :stop, "service[#{platform_service_name(new_resource.instance)}]", :before
-    notifies :start, "service[#{platform_service_name(new_resource.instance)}]", :immediately
-    notifies :run, 'execute[verify-root-password-okay]', :delayed
-    action :nothing
-  end
+  #execute 'apply-mariadb-root-password' do
+  #  user 'mysql'
+  #  command <<~EOF
+  #    /usr/sbin/mysqld --defaults-file=#{new_resource.mycnf_file} --datadir=#{data_dir(new_resource.instance)} --pid-file=#{pid_file} --init-file=#{data_dir(new_resource.instance)}/recovery.conf
+  #  EOF
+  #  notifies :create, 'file[generate-mariadb-root-password]', :before
+  #  notifies :create, "directory[#{pid_dir}]", :before
+  #  notifies :stop, "service[#{platform_service_name(new_resource.instance)}]", :before
+  #  notifies :start, "service[#{platform_service_name(new_resource.instance)}]", :immediately
+  #  notifies :run, 'execute[verify-root-password-okay]', :delayed
+  #  action :nothing
+  #end
 
   # make sure the password was properly set
   # TODO why is the passwort verified at all? is there a generic strategy / what shall happen on fail?
-  execute 'verify-root-password-okay' do
-    user 'root'
-    command "mysql -u root -p#{mariadb_root_password} -S #{default_socket(new_resource.instance)} -e '\\s'&>/dev/null"
-    action :nothing
-  end
+  #execute 'verify-root-password-okay' do
+  #  user 'root'
+  #  command "mysql -u root -p#{mariadb_root_password} -S #{default_socket(new_resource.instance)} -e '\\s'&>/dev/null"
+  #  action :nothing
+  #end
 end
 
 action_class do
@@ -333,19 +350,22 @@ action_class do
   end
 
   def build_replication_options
-    replication_opts = {}
+    replication_opts = []
     unless new_resource.replication_log_bin.nil?
-      replication_opts['log_bin']          = new_resource.replication_log_bin
-      replication_opts['sync_binlog']      = new_resource.replication_sync_binlog
-      replication_opts['log_bin_index']    = new_resource.replication_log_bin_index
-      replication_opts['expire_logs_days'] = new_resource.replication_expire_logs_days
-      replication_opts['max_binlog_size']  = new_resource.replication_max_binlog_size
+      replication_opts << "log_bin          = #{new_resource.replication_log_bin}"
+      replication_opts << "sync_binlog      = #{new_resource.replication_sync_binlog}"
+      replication_opts << "log_bin_index    = #{new_resource.replication_log_bin_index}"
+      replication_opts << "expire_logs_days = #{new_resource.replication_expire_logs_days}"
+      replication_opts << "max_binlog_size  = #{new_resource.replication_max_binlog_size}"
+      replication_opts << "relay_log        = #{new_resource.replication_relay_log}"
+      replication_opts << "relay_log_index  = #{new_resource.replication_relay_log_index}"
+      replication_opts << "relay_log_info_file   = #{new_resource.replication_relay_log_info}"
     end
     unless new_resource.replication_server_id.nil?
-      replication_opts['server_id'] = new_resource.replication_server_id
+      replication_opts << "server_id = #{new_resource.replication_server_id}"
     end
-    new_resource.replication_options.each do |key, value|
-      replication_opts[key] = value
+    new_resource.replication_options.each do |opt|
+      replication_opts << opt.to_s
     end
     replication_opts
   end
@@ -362,7 +382,7 @@ action_class do
     # init database files within data_dir (only if it doesn't contain a performance_schema/ subdirectory)
     # see https://mariadb.com/kb/en/library/mysql_install_db/
     execute "init-db-#{new_resource.instance}" do
-      user 'mysql'
+      user 'root'
       command <<~EOF
         #{mysql_install_db_bin} --defaults-file=#{conf_dir(new_resource.instance)}/my.cnf \
         --datadir=#{data_dir(new_resource.instance)} --basedir=/usr \
@@ -371,6 +391,17 @@ action_class do
       only_if "test -d #{data_dir(new_resource.instance)}"
       not_if "find #{data_dir(new_resource.instance)} -type d -name 'performance_schema' | grep -q '.'"
     end
+  end
+
+  def secure_installation
+    # run mysql_secure_installation
+    execute "secure-installation-#{new_resource.instance}" do
+      user 'root'
+      command <<~EOF
+        #{mysql_secure_installation_bin} --defaults-file=#{conf_dir(new_resource.instance)}/my.cnf
+      EOF
+    end
+    action :nothing
   end
 
   def move_data_dir
@@ -404,6 +435,10 @@ action_class do
 
   def mysql_install_db_bin
     'mysql_install_db'
+  end
+
+  def mysql_secure_installation_bin
+    'mysql_secure_installation'
   end
 
 end

@@ -19,6 +19,7 @@ include MariaDBCookbook::Helpers
 
 property :connection_name,             String,         name_property: true
 property :version,                     String,         default: '10.3'
+property :instance,                    String,         default: lazy { default_instance }
 property :host,                        [String, nil],  default: 'localhost', desired_state: false
 property :port,                        [Integer, nil], default: 3306,        desired_state: false
 property :user,                        [String, nil],  default: 'root',      desired_state: false
@@ -76,7 +77,7 @@ action :stop do
 end
 
 load_current_value do
-  conn_options = { user: user, password: password, host: host, port: port, socket: default_socket }
+  conn_options = { user: user, password: password, host: host, port: port, socket: default_socket(instance) }
   master_connection = if version.to_i < 10 || connection_name == 'default'
                         ''
                       else
@@ -96,16 +97,16 @@ load_current_value do
   slave_status = parse_mysql_batch_result(raw_slave_status)
   slave_status.each do |row|
     master_host row['Master_Host']
-    master_port row['Master_Port']
+    master_port row['Master_Port'].to_i
     master_user row['Master_User']
     master_log_file row['Master_Log_File']
-    master_log_pos row['Read_Master_Log_Pos']
+    master_log_pos row['Read_Master_Log_Pos'].to_i
     master_use_gtid row['Using_Gtid'].nil? ? 'No' : row['Using_Gtid']
   end
   master_info_file = if master_connection.empty?
-                       "#{data_dir}/master.info"
+                       "#{data_dir(instance)}/master.info"
                      else
-                       "#{data_dir}/master-#{master_connection}.info"
+                       "#{data_dir(instance)}/master-#{master_connection}.info"
                      end
   master_password IO.readlines(master_info_file)[5].chomp
 end
@@ -114,7 +115,7 @@ action_class do
   include MariaDBCookbook::Helpers
 
   def replication_query(query)
-    ctrl = { user: new_resource.user, password: new_resource.password, host: new_resource.host, port: new_resource.port, socket: default_socket }
+    ctrl = { user: new_resource.user, password: new_resource.password, host: new_resource.host, port: new_resource.port, socket: default_socket(new_resource.instance) }
     if server_older_than?('10.0')
       raw_query = query
     else
@@ -126,7 +127,9 @@ action_class do
   end
 
   def mariadb_version
-    ctrl = { user: new_resource.user, password: new_resource.password, host: new_resource.host, port: new_resource.port, socket: default_socket }
+    socket = new_resource.host == 'localhost' ? default_socket(new_resource.instance) : nil
+    ctrl = { user: new_resource.user, password: new_resource.password
+    }.merge!(socket.nil? ? { host: new_resource.host, port: new_resource.port.to_s } : { socket: socket })
     parse_mysql_batch_result(execute_sql('SELECT VERSION()', nil, ctrl)).each do |row|
       return row['VERSION()'][/([\d\.]+)-MariaDB.*/, 1]
     end
